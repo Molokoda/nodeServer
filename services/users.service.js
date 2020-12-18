@@ -5,7 +5,6 @@ const bcrypt = require('bcrypt');
 const saltRounds = 10;
 const { Sequelize, Model, DataTypes } = require('sequelize');
 const sequelize = new Sequelize('sqlite::memory:');
-
 async function tryToConnect(){
     try {
         await sequelize.authenticate();
@@ -22,7 +21,16 @@ User.init({
   password: DataTypes.STRING,
   avatar: DataTypes.STRING
 }, { sequelize, modelName: 'users' });
+
+
+class Photo extends Model{};
+Photo.init({
+    name: DataTypes.STRING,
+    file_path: DataTypes.STRING,
+    user_id: DataTypes.INTEGER
+}, {sequelize, modelName: 'photos'});
 sequelize.sync();
+User.hasMany(Photo, {foreignKey: 'user_id'});
 
 async function addUserToDB(user){
     await bcrypt.hash(user.password, saltRounds, function(err, hash) {
@@ -36,14 +44,15 @@ async function addUserToDB(user){
 
 async function getAllUsersFromDB(){
     const users = await User.findAll();
-    return JSON.stringify(users, null, 2);
+    return users;
 }
 
 async function getUserFromDB(userId){
     const user = await User.findOne( {
         where:{
             id: Number(userId)
-        }
+        },
+        include: [Photo]
     } );
     if (user === null) {
         return('Not Found');
@@ -73,9 +82,6 @@ async function deleteUserFromDB(id){
     } );
     if(dbUser){
         await dbUser.destroy();
-    }
-    else{
-        console.log('Not found');
     }
     
 }
@@ -111,22 +117,103 @@ class DBusersService {
         deleteUserFromDB(id);
     }
 
-    login = (userData) => {
-        return getUserFromDB(userData.id)
-            .then(user => {
-                return [bcrypt.compare( userData.password, user.password), user];
-        })
-            .then(result => {
-                if(result[0]){
-                    let id = userData.id;
-                    const token = jwt.sign( { id }, 'secret');
-                    const user = result[1];
-                    return {token, user };
-                }
-                else{
-                    return 'Invalid data';
-                }
-        })
+    login = async(userData) => {
+        const user = await getUserFromDB(userData.id);
+        const result = await bcrypt.compare(userData.password, user.password);
+        if(result){
+            const id = userData.id;
+            const token = jwt.sign( {id}, 'secret');
+            return {token, user}
+        }
+        else{
+            return 'Invalid data'
+        }
+    }
+}
+
+class DBphotoServices{
+    createPhoto = async(user) =>{ 
+        try{
+            const photo = await Photo.create({...user});
+            return photo
+        }
+        catch(err){
+            return err.message
+        }
+        
+    }
+
+    readPhoto = async(photoId) => {
+        const photo = await Photo.findOne( {
+            where:{
+                id: Number(photoId)
+            }
+        });
+
+        if(photo){
+            return photo
+        }
+        else{
+            return ('Not found')
+        }
+    }
+
+    readAllPhoto = async() => {
+        const photos = await Photo.findAll();
+        return photos;
+    }
+
+    updatePhoto = async(newData, photoId) =>{
+        const photo = await Photo.findOne({
+            where:{
+                id: Number(photoId)
+            }
+        });
+
+        if(photo){
+            for(let key in newData){
+                photo[key] = newData[key];
+            }
+            await photo.save();
+            return photo
+        }
+        else{
+            return('Not found')
+        }
+    }
+
+    deletePhoto = async(photoId) => {
+        const photo = await Photo.findOne({
+            where:{
+                id: Number(photoId)
+            }
+        });
+
+        if(photo){
+            await photo.destroy();
+            return('Done');
+        }
+        else{
+            return('Not Found')
+        }
+    }
+
+    getSomePhotos = async(page, count) => {
+        const amountOfPhotos = await Photo.count();
+        if(amountOfPhotos >= page * count){
+            const startId = page * count - count + 1;
+            let answerArray = [];
+            let photo;
+            for(let currentId = startId; currentId < startId + Number(count); currentId++){
+                photo = await Photo.findOne({where: {id: currentId }});
+                answerArray.push(photo);
+            }
+            return answerArray;
+        }
+        else{
+            return 'Too much'
+        }
+        
     }
 }
 
@@ -204,5 +291,5 @@ class JSONusersService {
 
 
 //module.exports = new JSONusersService();
-module.exports = new DBusersService();
-
+module.exports.DBusersService = new DBusersService();
+module.exports.DBphotoServices =  new DBphotoServices();
